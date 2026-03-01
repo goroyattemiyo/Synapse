@@ -20,6 +20,16 @@ load_dotenv()
 
 
 def run_synapse(user_goal: str) -> Sandbox:
+    """CUI用: 従来のprint出力版"""
+    result = run_synapse_with_callback(user_goal, callback=None)
+    return result["sandbox"]
+
+
+def run_synapse_with_callback(user_goal: str, callback=None) -> dict:
+    """
+    UI対応版: callbackでメッセージを通知する
+    callback(agent: str, content: str) が呼ばれるたびにUIに反映
+    """
     client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
     sandbox = Sandbox()
 
@@ -33,14 +43,27 @@ def run_synapse(user_goal: str) -> Sandbox:
         log_file.write(text + "\n")
         log_file.flush()
 
+    def notify(agent, content):
+        log(f"[{agent}]\n{content}\n")
+        if callback:
+            callback(agent, content)
+
     log(f"{'='*60}")
     log(f"Synapse v0.3.1 - Multi-Agent System")
     log(f"Goal: {user_goal}")
     log(f"{'='*60}\n")
 
+    result = {
+        "sandbox": sandbox,
+        "files": {},
+        "approved": False,
+        "rounds": 0,
+        "log_path": f"logs/{timestamp}.txt",
+    }
+
     try:
-        # Step 1: Orchestrator が計画を立てる
-        log("[Orchestrator] 計画を作成中...\n")
+        # Step 1: Orchestrator
+        notify("System", "Orchestrator が計画を作成中...")
         orch_messages = [{
             "role": "user",
             "content": f"以下のゴールの実装計画を簡潔に作成してください:\n\n{user_goal}",
@@ -49,17 +72,16 @@ def run_synapse(user_goal: str) -> Sandbox:
             client, ORCHESTRATOR_MODEL, ORCHESTRATOR_SYSTEM,
             orch_messages, None, sandbox, log,
         )
-        log(f"[Orchestrator]\n{orch_reply}\n")
+        notify("Orchestrator", orch_reply)
 
         reviewer_reply = ""
 
         for round_num in range(1, MAX_ROUNDS + 1):
-            log(f"\n{'='*40}")
-            log(f"  Round {round_num}/{MAX_ROUNDS}")
-            log(f"{'='*40}\n")
+            result["rounds"] = round_num
+            notify("System", f"--- Round {round_num}/{MAX_ROUNDS} ---")
 
-            # Step 2: Coder が実装
-            log("[Coder] 実装中...\n")
+            # Step 2: Coder
+            notify("System", "Coder が実装中...")
             if round_num == 1:
                 instruction = f"以下の計画に従って実装してください。ファイル数は最小限に:\n\n{orch_reply}"
             else:
@@ -70,10 +92,10 @@ def run_synapse(user_goal: str) -> Sandbox:
                 client, CODER_MODEL, CODER_SYSTEM,
                 coder_messages, CODER_TOOLS, sandbox, log,
             )
-            log(f"\n[Coder]\n{coder_reply}\n")
+            notify("Coder", coder_reply)
 
-            # Step 3: Reviewer が検証
-            log("[Reviewer] レビュー中...\n")
+            # Step 3: Reviewer
+            notify("System", "Reviewer がレビュー中...")
             files = sandbox.list_files()
             review_instruction = (
                 f"以下のファイルを検証してください。主要ファイルだけ読めばOK:\n"
@@ -85,36 +107,39 @@ def run_synapse(user_goal: str) -> Sandbox:
                 client, REVIEWER_MODEL, REVIEWER_SYSTEM,
                 reviewer_messages, REVIEWER_TOOLS, sandbox, log,
             )
-            log(f"\n[Reviewer]\n{reviewer_reply}\n")
+            notify("Reviewer", reviewer_reply)
 
-            # Step 4: 承認チェック
             if "APPROVED" in reviewer_reply:
-                log(f"\n✅ Round {round_num} で承認されました！")
+                notify("System", f"Round {round_num} で承認されました!")
+                result["approved"] = True
                 break
         else:
-            log(f"\n⚠️ {MAX_ROUNDS}ラウンドで承認に至りませんでした")
+            notify("System", f"{MAX_ROUNDS}ラウンドで承認に至りませんでした")
 
-        # 成果物の出力
-        log(f"\n{'='*60}")
-        log("成果物:")
-        log(f"{'='*60}")
+        # 成果物の収集
         for file_path in sandbox.list_files():
             content = sandbox.read_file(file_path)
+            result["files"][file_path] = content
             log(f"\n--- {file_path} ---")
             log(content)
 
         log(f"\nWorkspace: {sandbox.workspace}")
 
+    except Exception as e:
+        notify("System", f"エラー: {str(e)}")
+        result["error"] = str(e)
     finally:
         log_file.close()
         print(f"\nログ保存先: logs/{timestamp}.txt")
 
-    return sandbox
+    return result
 
 
 if __name__ == "__main__":
     goal = input("何を作りますか？ > ")
     if not goal.strip():
         goal = "電卓アプリをPythonで作ってください。四則演算と履歴表示機能付き。"
-    sandbox = run_synapse(goal)
-    print(f"\n成果物: {sandbox.workspace}")
+    result = run_synapse_with_callback(goal)
+    print(f"\n成果物: {result['sandbox'].workspace}")
+    print(f"承認: {result['approved']}")
+    print(f"ラウンド: {result['rounds']}")
