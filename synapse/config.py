@@ -1,0 +1,21 @@
+"""
+Synapse - 設定値
+"""
+
+# モデル設定
+ORCHESTRATOR_MODEL = "claude-sonnet-4-20250514"
+CODER_MODEL = "claude-sonnet-4-20250514"
+REVIEWER_MODEL = "claude-sonnet-4-20250514"
+
+# ループ制限
+MAX_ROUNDS = 3
+MAX_TOOL_ITERATIONS = 20
+
+# サンドボックス制限
+COMMAND_TIMEOUT = 60
+MAX_FILE_READ_SIZE = 100_000
+STDOUT_LIMIT = 5000
+STDERR_LIMIT = 2000
+
+# トークン制限
+MAX_TOKENS = 4096
